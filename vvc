@@ -1,0 +1,100 @@
+#!/bin/sh
+# Source
+
+
+# [[file:README.org::*Source][Source:1]]
+LC_ALL=C
+readonly VERSION="0.0.1"
+
+usage() {
+    cat <<HELP
+Usage
+vvc { update | add | remove | show | list | tsvlist | version }
+vvc provides a high-level commandline interface for the keeping track of
+variant annotation changes from sources like Ensembl, NCBI via their API's.
+
+update
+    update is used to resynchronize the variant annotations from their sources.
+add
+    add is followed by one variant identifier (rs number, SPDI, hgvs) desired to be annotated and keep track of
+remove
+    remove is identical to add except that variants are removed and no longer kept track of.
+search
+    search for the given regex(7) term(s) from the list of track variants and display matches.
+show
+    show information about the given variant including its install source and update mechanism.
+list
+    list the variants.
+tsvlist
+    tsv formatted list the variants
+help
+    show this help
+version
+    show vvc version
+HELP
+}
+# Source:1 ends here
+
+# [[file:README.org::*Source][Source:3]]
+validate_variant() {
+    VARIANT="$1"
+    if [ "$VARIANT" = 3 ]; then
+        fancy_message error "$VARIANT REF MISMATCH"
+        exit 1
+    fi
+}
+# Source:3 ends here
+
+# [[file:README.org::*Source][Source:4]]
+add() {
+    :
+}
+# Source:4 ends here
+
+# [[file:README.org::*Source][Source:5]]
+if [ -n "${1}" ]; then
+    ACTION="$1"
+    shift
+else
+    fancy_message error "You must specify an action."
+    usage
+    exit 1
+fi
+
+case ${ACTION} in
+    add | remove | show)
+        if [ -z "${1}" ]; then
+            fancy_message error "You must specify a variant:\n"
+            list_variants
+            exit 1
+        fi
+        ;;
+esac
+
+case "${ACTION}" in
+    show) ;;
+
+    add)
+        for variant in "$@"; do
+            validate_variant "$variant"
+        done
+        ;;
+    list)
+        list_variants
+        ;;
+    tsv_list | tsvlist | tsv)
+        tsvlist_variants
+        ;;
+    remove) ;;
+
+    search)
+        list_variants | grep "${1}"
+        ;;
+    update)
+        update_annotations
+        ;;
+    version) echo "${VERSION}" ;;
+    help) usage ;;
+    *) fancy_message fatal "Unknown action supplied: ${ACTION}" ;;
+esac
+# Source:5 ends here

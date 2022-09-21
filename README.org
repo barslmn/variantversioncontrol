@@ -1,0 +1,139 @@
+#+title: Variant Version Control
+
+* API Table
+
+| name | description            | source  | url                      | path                        | data                    | parameters |
+|------+------------------------+---------+--------------------------+-----------------------------+-------------------------+------------|
+| VEP  | Ensembl VEP annotation | ensembl | https://rest.ensembl.org | =/vep/homo_sapiens/region/= | '{"variants":["%VCF"]}' | refseq=1   |
+|      |                        |         |                          |                             |                         |            |
+
+* Source
+
+#+BEGIN_SRC sh :tangle ./vvc :comments both :shebang "#!/bin/sh"
+LC_ALL=C
+readonly VERSION="0.0.1"
+
+usage() {
+    cat <<HELP
+Usage
+vvc { update | add | remove | show | list | tsvlist | version }
+vvc provides a high-level commandline interface for the keeping track of
+variant annotation changes from sources like Ensembl, NCBI via their API's.
+
+update
+    update is used to resynchronize the variant annotations from their sources.
+add
+    add is followed by one variant identifier (rs number, SPDI, hgvs) desired to be annotated and keep track of
+remove
+    remove is identical to add except that variants are removed and no longer kept track of.
+search
+    search for the given regex(7) term(s) from the list of track variants and display matches.
+show
+    show information about the given variant including its install source and update mechanism.
+list
+    list the variants.
+tsvlist
+    tsv formatted list the variants
+help
+    show this help
+version
+    show vvc version
+HELP
+}
+#+END_SRC
+
+#+BEGIN_SRC sh
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+fancy_message() (
+    if [ -z "${1}" ] || [ -z "${2}" ]; then
+        return
+    fi
+
+    RED="\e[31m"
+    GREEN="\e[32m"
+    YELLOW="\e[33m"
+    MAGENTA="\e[35m"
+    RESET="\e[0m"
+    MESSAGE_TYPE=""
+    MESSAGE=""
+    MESSAGE_TYPE="${1}"
+    MESSAGE="${2}"
+
+    case ${MESSAGE_TYPE} in
+        info) printf "  [${GREEN}+${RESET}] %s\n" "${MESSAGE}" ;;
+        progress) printf "  [${GREEN}+${RESET}] %s" "${MESSAGE}" ;;
+        recommend) printf "  [${MAGENTA}!${RESET}] %s\n" "${MESSAGE}" ;;
+        warn) printf "  [${YELLOW}*${RESET}] WARNING! %s\n" "${MESSAGE}" ;;
+        error) printf "  [${RED}!${RESET}] ERROR! %s\n" "${MESSAGE}" ;;
+        fatal)
+            printf "  [${RED}!${RESET}] ERROR! %s\n" "${MESSAGE}"
+            exit 1
+            ;;
+        *) printf "  [?] UNKNOWN: %s\n" "${MESSAGE}" ;;
+    esac
+)
+#+END_SRC
+
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+validate_variant() {
+    VARIANT="$1"
+    if [ "$VARIANT" = 3 ]; then
+        fancy_message error "$VARIANT REF MISMATCH"
+        exit 1
+    fi
+}
+#+END_SRC
+
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+add() {
+    :
+}
+#+END_SRC
+
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+if [ -n "${1}" ]; then
+    ACTION="$1"
+    shift
+else
+    fancy_message error "You must specify an action."
+    usage
+    exit 1
+fi
+
+case ${ACTION} in
+    add | remove | show)
+        if [ -z "${1}" ]; then
+            fancy_message error "You must specify a variant:\n"
+            list_variants
+            exit 1
+        fi
+        ;;
+esac
+
+case "${ACTION}" in
+    show) ;;
+
+    add)
+        for variant in "$@"; do
+            validate_variant "$variant"
+        done
+        ;;
+    list)
+        list_variants
+        ;;
+    tsv_list | tsvlist | tsv)
+        tsvlist_variants
+        ;;
+    remove) ;;
+
+    search)
+        list_variants | grep "${1}"
+        ;;
+    update)
+        update_annotations
+        ;;
+    version) echo "${VERSION}" ;;
+    help) usage ;;
+    *) fancy_message fatal "Unknown action supplied: ${ACTION}" ;;
+esac
+#+END_SRC
