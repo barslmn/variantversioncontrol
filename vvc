@@ -1,11 +1,39 @@
 #!/bin/sh
-# Source
+
+
+# Some variables
+
+# + VVC_DIR
+# + VVC_REPOSITORY
+# + VVC_LOGLVL
+#   options are: DEBUG, INFO, WARNING, ERROR
 
 
 # [[file:README.org::*Source][Source:1]]
 LC_ALL=C
-readonly VERSION="0.0.1"
+if [ -z "$VVC_DIR" ]; then
+    VVC_DIR="$HOME/.local/share"
+fi
 
+if [ -z "$VVC_LOGLVL" ]; then
+    VVC_LOGLVL="DEBUG"
+fi
+
+if [ -z "$VVC_REPOSITORY" ]; then
+    VVC_REPOSITORY="my_variants"
+fi
+VARIANT_REPOSITORY="$VVC_DIR/$VVC_REPOSITORY"
+CURRENT_DIR="$PWD"
+readonly VERSION="0.0.1"
+# Source:1 ends here
+
+
+
+
+# Help function
+
+
+# [[file:README.org::*Source][Source:2]]
 usage() {
     cat <<HELP
 Usage
@@ -23,6 +51,8 @@ search
     search for the given regex(7) term(s) from the list of track variants and display matches.
 show
     show information about the given variant including its install source and update mechanism.
+history
+    show change history of the given variant.
 list
     list the variants.
 tsvlist
@@ -33,31 +63,208 @@ version
     show vvc version
 HELP
 }
-# Source:1 ends here
+# Source:2 ends here
+
+
+
+# message formatter
+
 
 # [[file:README.org::*Source][Source:3]]
+fancy_message() (
+    if [ -z "${1}" ] || [ -z "${2}" ]; then
+        return
+    fi
+
+    RED="\e[31m"
+    GREEN="\e[32m"
+    YELLOW="\e[33m"
+    MAGENTA="\e[35m"
+    RESET="\e[0m"
+    MESSAGE_TYPE=""
+    MESSAGE=""
+    MESSAGE_TYPE="${1}"
+    MESSAGE="${2}"
+
+    case ${MESSAGE_TYPE} in
+        info) printf "  [${GREEN}+${RESET}] %s\n" "${MESSAGE}" ;;
+        progress) printf "  [${GREEN}+${RESET}] %s" "${MESSAGE}" ;;
+        recommend) printf "  [${MAGENTA}!${RESET}] %s\n" "${MESSAGE}" ;;
+        warn) printf "  [${YELLOW}*${RESET}] WARNING! %s\n" "${MESSAGE}" ;;
+        error) printf "  [${RED}!${RESET}] ERROR! %s\n" "${MESSAGE}" ;;
+        fatal)
+            printf "  [${RED}!${RESET}] ERROR! %s\n" "${MESSAGE}"
+            exit 1
+            ;;
+        *) printf "  [?] UNKNOWN: %s\n" "${MESSAGE}" ;;
+    esac
+)
+# Source:3 ends here
+
+
+
+# log level message
+
+
+# [[file:README.org::*Source][Source:4]]
+get_log_level() {
+    lvl="$1"
+    case $lvl in
+        debug | DEBUG | d | D)
+            lvl="0"
+            ;;
+        info | INFO | I | i)
+            lvl="1"
+            ;;
+        warning | warn | WARNING | WARN | W | w)
+            lvl="2"
+            ;;
+        error | err | ERROR | ERR | E | e)
+            lvl="3"
+            ;;
+    esac
+    echo $lvl
+}
+
+LOGLVL=$(get_log_level $VVC_LOGLVL)
+log() {
+    level=$1
+    message=$2
+    loglvl=$(get_log_level "$level")
+    if [ "$loglvl" -ge "$LOGLVL" ]; then
+        case $loglvl in
+            0 | debug)
+                fancy_message "info" "$level $message"
+                ;;
+            1 | info)
+                fancy_message "info" "$level $message"
+                ;;
+            2 | warn)
+                fancy_message "warning" "$level $message"
+                ;;
+            3 | err)
+                fancy_message "error" "$level $message"
+                ;;
+        esac
+    fi
+}
+# Source:4 ends here
+
+
+
+# check variant repository
+
+
+# [[file:README.org::*Source][Source:5]]
+check_variant_repository() {
+    if [ -d "$VARIANT_REPOSITORY" ]; then
+        log "debug" "Directory $VARIANT_REPOSITORY exists. Changing directory."
+        cd "$VARIANT_REPOSITORY" || exit
+        if [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" ]; then
+            log "debug" "Variant Repository at $VARIANT_REPOSITORY exists."
+            return 0
+        else
+            log "info" "Variant Repository at $VARIANT_REPOSITORY does not exist. Creating it for you."
+            git init
+            touch "$VARIANT_REPOSITORY/variants"
+            git add variants annotations/
+            git commit "initial commit"
+        fi
+    else
+        log "info" "Directory $VARIANT_REPOSITORY does not exist. Creating it for you."
+        mkdir -p "$VARIANT_REPOSITORY/annotations"
+        check_variant_repository
+    fi
+}
+# Source:5 ends here
+
+# [[file:README.org::*Source][Source:6]]
 validate_variant() {
     VARIANT="$1"
     if [ "$VARIANT" = 3 ]; then
         fancy_message error "$VARIANT REF MISMATCH"
         exit 1
     fi
-}
-# Source:3 ends here
 
-# [[file:README.org::*Source][Source:4]]
-add() {
-    :
+    spdi="$1"
+    host="https://rest.ensembl.org"
+    path="variant_recoder/human"
+    header="Content-type:application/json"
+    cmd="curl $host/$path/$spdi  -H $header"
+    res=$(eval $cmd)
+    echo "$cmd"
 }
-# Source:4 ends here
+# Source:6 ends here
 
-# [[file:README.org::*Source][Source:5]]
+
+
+# add variant
+
+
+# [[file:README.org::*Source][Source:7]]
+add_variant() {
+    variant="$1"
+    if grep "$variant" variants >/dev/null; then
+        log "info" "variant already added! Exiting."
+        exit
+    fi
+
+    log "info" "Adding variant $variant"
+    echo "$variant" >>variants
+    mkdir -p "annotations/$variant/"
+    git add variants "annotations/$variant/"
+    git commit -m "added variant $variant"
+    update_variant "$variant"
+}
+# Source:7 ends here
+
+# [[file:README.org::*Source][Source:8]]
+# spdi_2_vcf() {
+#     spdi=$1
+#     chr_pos=$(echo "$spdi" | cut -d":" -f1,2)
+#     ref_alt=$(echo "$spdi" | cut -d":" -f3,4)
+#     echo "$chr_pos . $ref_alt" | tr ":" " "
+# }
+# Source:8 ends here
+
+
+
+# + update variant
+
+# [[file:README.org::*Source][Source:12]]
+update_variant() {
+    # log "info" "updating variant $spdi"
+    # vcf=$(spdi_2_vcf $spdi)
+    # log "info" "converted $spdi to $vcf"
+    # host="https://rest.ensembl.org"
+    # path="vep/homo_sapiens/region"
+    # header="Content-type:application/json"
+    # data=$(printf "'%s'" "$(printf '{"variants": ["%s"]}' "$vcf")")
+
+    # cmd="curl '$host/$path/$spdi' -H $header"
+    # # check response is 200
+    # echo "$cmd"
+    # res=$(eval $cmd)
+    # echo "$res"
+    # # You probably need a regex here
+    host=$(echo "$host" | cut -d '/' -f 3)
+    path="annotations/$variant/$host/$path"
+    mkdir -p "$path"
+    echo $res > "$path/data"
+    git add "$path/data"
+    git commit -m "updated $spdi $path"
+}
+# Source:12 ends here
+
+# [[file:README.org::*Source][Source:13]]
+check_variant_repository
+
 if [ -n "${1}" ]; then
     ACTION="$1"
     shift
 else
     fancy_message error "You must specify an action."
-    usage
+    # usage
     exit 1
 fi
 
@@ -73,10 +280,9 @@ esac
 
 case "${ACTION}" in
     show) ;;
-
     add)
         for variant in "$@"; do
-            validate_variant "$variant"
+            add_variant "$variant"
         done
         ;;
     list)
@@ -97,4 +303,6 @@ case "${ACTION}" in
     help) usage ;;
     *) fancy_message fatal "Unknown action supplied: ${ACTION}" ;;
 esac
-# Source:5 ends here
+
+cd "$CURRENT_DIR" || exit
+# Source:13 ends here

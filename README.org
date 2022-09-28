@@ -1,18 +1,66 @@
 #+title: Variant Version Control
 
+
+Variant version control (VVC) is a tool for tracking changes over time in
+variant annotation from source like Ensembl, NCBI, Clingen via their APIs'.
+VVC helps you to store the variant that you are interested in a git repository.
+Makes it possible to track changes in variant annotation with git commits.
+Informs you of the annotation changes by mail or notification.
+
+* Installation
+
+git clone
+
+* Usage
+
 * API Table
 
-| name | description            | source  | url                      | path                        | data                    | parameters |
-|------+------------------------+---------+--------------------------+-----------------------------+-------------------------+------------|
+| name | description | source    | url | path | data | parameters |
+|------+-------------+-----------+-----+------+------+------------|
+| VEP  |             | Ensembl   |     |      |      |            |
+|      |             | Mutalyzer |     |      |      |            |
+|      |             | ClinGen   |     |      |      |            |
+|      |             | InterVar  |     |      |      |            |
+|      |             | LitVar    |     |      |      |            |
+
+
 | VEP  | Ensembl VEP annotation | ensembl | https://rest.ensembl.org | =/vep/homo_sapiens/region/= | '{"variants":["%VCF"]}' | refseq=1   |
-|      |                        |         |                          |                             |                         |            |
+https://wintervar.wglab.org/url.php
+https://rest.ensembl.org/documentation/info/variant_recoder
+
+
 
 * Source
 
+Some variables
+
++ VVC_DIR
++ VVC_REPOSITORY
++ VVC_LOGLVL
+  options are: DEBUG, INFO, WARNING, ERROR
+
 #+BEGIN_SRC sh :tangle ./vvc :comments both :shebang "#!/bin/sh"
 LC_ALL=C
-readonly VERSION="0.0.1"
+if [ -z "$VVC_DIR" ]; then
+    VVC_DIR="$HOME/.local/share"
+fi
 
+if [ -z "$VVC_LOGLVL" ]; then
+    VVC_LOGLVL="DEBUG"
+fi
+
+if [ -z "$VVC_REPOSITORY" ]; then
+    VVC_REPOSITORY="my_variants"
+fi
+VARIANT_REPOSITORY="$VVC_DIR/$VVC_REPOSITORY"
+CURRENT_DIR="$PWD"
+readonly VERSION="0.0.1"
+#+END_SRC
+
+
+Help function
+
+#+BEGIN_SRC sh :tangle ./vvc :comments both
 usage() {
     cat <<HELP
 Usage
@@ -30,6 +78,8 @@ search
     search for the given regex(7) term(s) from the list of track variants and display matches.
 show
     show information about the given variant including its install source and update mechanism.
+history
+    show change history of the given variant.
 list
     list the variants.
 tsvlist
@@ -42,7 +92,8 @@ HELP
 }
 #+END_SRC
 
-#+BEGIN_SRC sh
+message formatter
+
 #+BEGIN_SRC sh :tangle ./vvc :comments both
 fancy_message() (
     if [ -z "${1}" ] || [ -z "${2}" ]; then
@@ -74,6 +125,77 @@ fancy_message() (
 )
 #+END_SRC
 
+log level message
+
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+get_log_level() {
+    lvl="$1"
+    case $lvl in
+        debug | DEBUG | d | D)
+            lvl="0"
+            ;;
+        info | INFO | I | i)
+            lvl="1"
+            ;;
+        warning | warn | WARNING | WARN | W | w)
+            lvl="2"
+            ;;
+        error | err | ERROR | ERR | E | e)
+            lvl="3"
+            ;;
+    esac
+    echo $lvl
+}
+
+LOGLVL=$(get_log_level $VVC_LOGLVL)
+log() {
+    level=$1
+    message=$2
+    loglvl=$(get_log_level "$level")
+    if [ "$loglvl" -ge "$LOGLVL" ]; then
+        case $loglvl in
+            0 | debug)
+                fancy_message "info" "$level $message"
+                ;;
+            1 | info)
+                fancy_message "info" "$level $message"
+                ;;
+            2 | warn)
+                fancy_message "warning" "$level $message"
+                ;;
+            3 | err)
+                fancy_message "error" "$level $message"
+                ;;
+        esac
+    fi
+}
+#+END_SRC
+
+check variant repository
+
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+check_variant_repository() {
+    if [ -d "$VARIANT_REPOSITORY" ]; then
+        log "debug" "Directory $VARIANT_REPOSITORY exists. Changing directory."
+        cd "$VARIANT_REPOSITORY" || exit
+        if [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" ]; then
+            log "debug" "Variant Repository at $VARIANT_REPOSITORY exists."
+            return 0
+        else
+            log "info" "Variant Repository at $VARIANT_REPOSITORY does not exist. Creating it for you."
+            git init
+            touch "$VARIANT_REPOSITORY/variants"
+            git add variants annotations/
+            git commit "initial commit"
+        fi
+    else
+        log "info" "Directory $VARIANT_REPOSITORY does not exist. Creating it for you."
+        mkdir -p "$VARIANT_REPOSITORY/annotations"
+        check_variant_repository
+    fi
+}
+#+END_SRC
+
 #+BEGIN_SRC sh :tangle ./vvc :comments both
 validate_variant() {
     VARIANT="$1"
@@ -81,22 +203,124 @@ validate_variant() {
         fancy_message error "$VARIANT REF MISMATCH"
         exit 1
     fi
+
+    spdi="$1"
+    host="https://rest.ensembl.org"
+    path="variant_recoder/human"
+    header="Content-type:application/json"
+    cmd="curl $host/$path/$spdi  -H $header"
+    res=$(eval $cmd)
+    echo "$cmd"
+}
+#+END_SRC
+
+add variant
+
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+add_variant() {
+    variant="$1"
+    if grep "$variant" variants >/dev/null; then
+        log "info" "variant already added! Exiting."
+        exit
+    fi
+
+    log "info" "Adding variant $variant"
+    echo "$variant" >>variants
+    mkdir -p "annotations/$variant/"
+    git add variants "annotations/$variant/"
+    git commit -m "added variant $variant"
+    update_variant "$variant"
 }
 #+END_SRC
 
 #+BEGIN_SRC sh :tangle ./vvc :comments both
-add() {
-    :
+# spdi_2_vcf() {
+#     spdi=$1
+#     chr_pos=$(echo "$spdi" | cut -d":" -f1,2)
+#     ref_alt=$(echo "$spdi" | cut -d":" -f3,4)
+#     echo "$chr_pos . $ref_alt" | tr ":" " "
+# }
+#+END_SRC
+
++ Map to other assembly information https://rest.ensembl.org/documentation/info/assembly_map
+#+BEGIN_SRC sh
+curl -s 'https://rest.ensembl.org/map/human/GRCh38/18:36156575..36156575:1/GRCh37?' -H 'Content-type:application/json' | jq ".mappings[].mapped"
+#+END_SRC
+
++ Get hgvsc information https://rest.ensembl.org/documentation/info/variant_recoder
+#+BEGIN_SRC sh
+# $1="18:36156575:G:A"
+variant_recoder() (
+myPROTOCOL="https"
+myHOST="rest.ensembl.org"
+myPATH="variant_recoder/human"
+myMETHOD="GET"
+myHEADER="Content-type:application/json"
+# myPARAMETERS="?assembly=GCF_000001405.38"
+myDATA="$1"
+myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"/"$myDATA"
+curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER" | jq '.'
+)
+#+END_SRC
+
++ Get rs id
+#+BEGIN_SRC sh
+# $1="18 36156575 . G A"
+get_rs_id() (
+myPROTOCOL="https"
+myHOST="api.ncbi.nlm.nih.gov"
+myPATH="variation/v0/vcf/file/set_rsids"
+myMETHOD="POST"
+myHEADER="Content-Type: text/plain; charset=utf-8"
+myPARAMETERS="?assembly=GCF_000001405.38"
+myDATA="$1"
+myURL="$myPROTOCOL"://"$myHOST"/"$myPATH""$myPARAMETERS"
+RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER" -d "$myDATA")
+if echo "$RESPONSE" | grep -i "error"; then
+    fancy_message error "An error occured while getting the rs id for the variant $1"
+    fancy_message error "$RESPONSE"
+    fancy_message error "Exiting..."
+    exit 1
+fi
+echo "$RESPONSE" | awk "{print $3}"
+)
+#+END_SRC
+
++ update variant
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+update_variant() {
+    # log "info" "updating variant $spdi"
+    # vcf=$(spdi_2_vcf $spdi)
+    # log "info" "converted $spdi to $vcf"
+    # host="https://rest.ensembl.org"
+    # path="vep/homo_sapiens/region"
+    # header="Content-type:application/json"
+    # data=$(printf "'%s'" "$(printf '{"variants": ["%s"]}' "$vcf")")
+
+    # cmd="curl '$host/$path/$spdi' -H $header"
+    # # check response is 200
+    # echo "$cmd"
+    # res=$(eval $cmd)
+    # echo "$res"
+    # # You probably need a regex here
+    host=$(echo "$host" | cut -d '/' -f 3)
+    path="annotations/$variant/$host/$path"
+    mkdir -p "$path"
+    echo $res > "$path/data"
+    git add "$path/data"
+    git commit -m "updated $spdi $path"
 }
 #+END_SRC
 
 #+BEGIN_SRC sh :tangle ./vvc :comments both
+check_variant_repository
+
 if [ -n "${1}" ]; then
     ACTION="$1"
     shift
 else
     fancy_message error "You must specify an action."
-    usage
+    # usage
     exit 1
 fi
 
@@ -112,10 +336,9 @@ esac
 
 case "${ACTION}" in
     show) ;;
-
     add)
         for variant in "$@"; do
-            validate_variant "$variant"
+            add_variant "$variant"
         done
         ;;
     list)
@@ -136,4 +359,6 @@ case "${ACTION}" in
     help) usage ;;
     *) fancy_message fatal "Unknown action supplied: ${ACTION}" ;;
 esac
+
+cd "$CURRENT_DIR" || exit
 #+END_SRC
