@@ -1,0 +1,6 @@
+#!/bin/sh
+
+hgvsg=$(echo "$1" | jq -r '.[][].hgvsg[] | @text')
+spdi=$(echo "$1" | jq -r '.[][].spdi[]')
+identifiers="hgvsg=$hgvsg spdi=$spdi $identifiers"
+export identifiers

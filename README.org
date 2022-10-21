@@ -1,6 +1,5 @@
 #+title: Variant Version Control
 
-
 Variant version control (VVC) is a tool for tracking changes over time in
 variant annotation from source like Ensembl, NCBI, Clingen via their APIs'.
 VVC helps you to store the variant that you are interested in a git repository.
@@ -10,6 +9,12 @@ Informs you of the annotation changes by mail or notification.
 * Installation
 
 git clone
+
+*Set up a cron job*
+~cron~ is a tool for periodic job execution.
+To update weekly run the following command.
+
+https://crontab.guru/#0_9_*_*_3
 
 * Usage
 
@@ -30,7 +35,7 @@ https://rest.ensembl.org/documentation/info/variant_recoder
 
 
 
-* Source
+* [ ] Source
 
 Some variables
 
@@ -46,7 +51,7 @@ if [ -z "$VVC_DIR" ]; then
 fi
 
 if [ -z "$VVC_LOGLVL" ]; then
-    VVC_LOGLVL="DEBUG"
+    VVC_LOGLVL="INFO"
 fi
 
 if [ -z "$VVC_REPOSITORY" ]; then
@@ -148,6 +153,8 @@ get_log_level() {
 }
 
 LOGLVL=$(get_log_level $VVC_LOGLVL)
+if [ "$LOGLVL" = 0 ]; then set -xv; fi
+
 log() {
     level=$1
     message=$2
@@ -199,18 +206,233 @@ check_variant_repository() {
 #+BEGIN_SRC sh :tangle ./vvc :comments both
 validate_variant() {
     VARIANT="$1"
-    if [ "$VARIANT" = 3 ]; then
-        fancy_message error "$VARIANT REF MISMATCH"
-        exit 1
+    if echo "$VARIANT" | grep -P '(chr|)([1-9]|1[1-9]|2[0-2]|X|Y):(\d+):(A|T|C|G)+:(A|T|C|G)+' >/dev/null; then
+        fancy_message info "$VARIANT variant passed the regex validation."
+    else
+        fancy_message error "$VARIANT variant needs to be in SPDI format."
     fi
+}
+#+END_SRC
 
-    spdi="$1"
-    host="https://rest.ensembl.org"
-    path="variant_recoder/human"
-    header="Content-type:application/json"
-    cmd="curl $host/$path/$spdi  -H $header"
-    res=$(eval $cmd)
-    echo "$cmd"
+
+
++ Map to other assembly information https://rest.ensembl.org/documentation/info/assembly_map
+#+BEGIN_SRC sh
+curl -s 'https://rest.ensembl.org/map/human/GRCh38/18:36156575..36156575:1/GRCh37?' -H 'Content-type:application/json' | jq ".mappings[].mapped"
+#+END_SRC
+
++ Get other variant representations https://rest.ensembl.org/documentation/info/variant_recoder
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+# $1="18:36156575:G:A"
+variant_recoder() (
+    myMETHOD="GET"
+    myHEADER="Content-type:application/json"
+    # myPARAMETERS="?assembly=GCF_000001405.38"
+    myDATA="$1"
+    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"/"$myDATA"
+    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
+    echo "$RESPONSE"
+)
+#+END_SRC
+
+
++ get VEP annotation
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+get_vep() (
+    VARIANT="$1"
+    myMETHOD="GET"
+    myHEADER="Content-type:application/json"
+    # myPARAMETERS="?assembly=GCF_000001405.38"
+    myDATA="$1"
+    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"/"$myDATA"
+    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
+    echo "$RESPONSE"
+)
+#+END_SRC
+
++ Get rs id
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+# $1="NC_000008.11:19956017:A:G"
+get_rsid() {
+    SPDI="$1"
+    myMETHOD="GET"
+    myHEADER="Content-Type: text/plain; charset=utf-8"
+    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"
+    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
+    export RESPONSE
+    case "$RESPONSE" in
+        *"does not match any RSID"*)
+            fancy_message info "No rs id found for the variant: $SPDI"
+            echo "NOVEL"
+            ;;
+        *"error"*)
+            fancy_message error "An error occured while getting the rs id for the variant $1"
+            fancy_message error "$RESPONSE"
+            fancy_message error "Exiting..."
+            exit 1
+            ;;
+    esac
+    echo "$RESPONSE"
+}
+#+END_SRC
+
+
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+# $1=267
+get_alfa() {
+    rsid="$1"
+    myMETHOD="GET"
+    myHEADER="accept: application/json"
+    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"
+    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
+    export RESPONSE
+    case "$RESPONSE" in
+        *"error"*)
+            fancy_message error "An error occured while getting the frequencies for rsid $rsid"
+            fancy_message error "$RESPONSE"
+            ;;
+    esac
+    echo "$RESPONSE"
+}
+#+END_SRC
+
++ get litvar
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+# $1=rs267,rs5,rs6
+get_litvar() {
+    rsid="$1"
+    myMETHOD="GET"
+    myHEADER="accept: application/json"
+    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"
+    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
+    export RESPONSE
+    case "$RESPONSE" in
+        ,*"error"*)
+            fancy_message error "An error occured while getting the frequencies for rsid $rsid"
+            fancy_message error "$RESPONSE"
+            ;;
+    esac
+    echo "$RESPONSE"
+}
+#+END_SRC
+
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+# $1=hgvsg
+get_clingen() {
+    hgvsg="$1"
+    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"
+    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
+    case "$RESPONSE" in
+        ,*"error"*)
+            fancy_message error "An error occured while getting ClinGen for $hgvsg"
+            fancy_message error "$RESPONSE"
+            ;;
+    esac
+    echo "$RESPONSE"
+}
+
+# curl the URL return the JSON result
+#+END_SRC
+
++ update variant
+
+| step | using   | description                                     |
+|------+---------+-------------------------------------------------|
+|    1 | ENSEMBL | First run ensembl recoder.                      |
+|    2 | ENSEMBL | Get VEP annotation                              |
+|    3 | JQ      | Get HGVSg and refseq SPDI from ensembl/recoder. |
+|    4 | NCBI    | Get rsid from ncbi/variation using that HGVSg   |
+|    5 | NCBI    | Get frequencies from alfa usind rsid.           |
+|    6 | NCBI    | Get pmids from litvar using rsid.               |
+
+
+
++ [ ] spliceai
+ curl -k https://spliceailookup-api.broadinstitute.org/spliceai/\?hg\=38\&variant\=chr8-140300616-T-G | jq "."
+
+** Somatic
++ [ ] CIVIC
++ [ ] Onkokb
++ [ ] CancerVar
+
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+ENSEMBLHOST="ensembl"
+VEPPATH="$ENSEMBLHOST/vep"
+VARRECPATH="$ENSEMBLHOST/variantrecoder"
+NCBIHOST="ncbi"
+ALFAPATH="$NCBIHOST/alfa"
+LITVARPATH="$NCBIHOST/litvar"
+
+CLINGENHOST="clingen"
+CLINGENPATH="$CLINGENHOST/interpretations"
+
+# $1 path
+# $2 data
+write_data() {
+    mkdir -p "annotations/$1"
+    echo "$2" | jq -S '.' >"annotations/$1/data"
+}
+api_call() {
+    URL="$1"
+    METHOD="GET"
+    HEADER="accept: application/json"
+    RESPONSE=$(curl -s -X "$METHOD" "$URL" -H "$HEADER")
+    echo "$RESPONSE"
+}
+
+API_TABLE="
+RECODER_URL https://rest.ensembl.org/variant_recoder/human/$spdi
+VEP_URL     https://rest.ensembl.org/vep/human/hgvs/$hgvsg
+RSID_URL    https://api.ncbi.nlm.nih.gov/variation/v0/spdi/$spdi/rsids
+ALFA_URL    https://api.ncbi.nlm.nih.gov/variation/v0/refsnp/$rsid/frequency
+LITVAR_URL  https://ncbi.nlm.nih.gov/research/bionlp/litvar/api/v1/entity/litvar/rs$rsid%23%23
+CLINGEN_URL https://erepo.genome.network/evrepo/api/interpretations?hgvs=$hgvsg
+"
+
+update_variant() {
+    while IFS= read -r line; do
+        identifiers=""
+        tmp=$(mktemp)
+        path=$(echo $line | awk -F"\t" '{print $1}')
+        url=$(echo $line | awk -F"\t" '{print $2}')
+        handler=$(echo $line | awk -F"\t" '{print $3}')
+        echo "$identifiers\nURL=$url" > $tmp
+        . $tmp
+        response=$(api_call $URL)
+        if [ -z "$handler" ]; then
+            sh $handler $response
+        fi
+        write_data $response $path
+    done < apitable.tsv | sed '/^$/d'
+    git add .
+    git commit -m "updated $variant"
+}
+# update_variant() {
+#     varrec=$(variant_recoder "$variant")
+#     write_data "$variant/$VARRECPATH" "$varrec"
+#     hgvsg=$(echo "$varrec" | jq -r '.[][].hgvsg[] | @text')
+#     refseq_spdi=$(echo "$varrec" | jq -r '.[][].spdi[]')
+#     vep_data=$(get_vep "$hgvsg")
+#     write_data "$variant/$VEPPATH" "$vep_data"
+#     rsid=$(get_rsid "$refseq_spdi" | jq -r ".[].rsids[]")
+#     alfa_data=$(get_alfa "$rsid")
+#     write_data "$variant/$ALFAPATH" "$alfa_data"
+#     litvar_data=$(get_litvar "$rsid")
+#     write_data "$variant/$LITVARPATH" "$litvar_data"
+#     clingen_data=$(get_clingen "$hgvsg")
+#     write_data "$variant/$CLINGENPATH" "$clingen_data"
+#     git add .
+#     git commit -m "updated $variant"
+# }
+#+END_SRC
+
+
+#+BEGIN_SRC sh :tangle ./vvc :comments both
+update_annotations() {
+    log "info" "Updating all variants."
+    while IFS= read -r variant; do
+        update_variant "$variant"
+    done <variants
 }
 #+END_SRC
 
@@ -223,6 +445,7 @@ add_variant() {
         log "info" "variant already added! Exiting."
         exit
     fi
+    validate_variant "$variant"
 
     log "info" "Adding variant $variant"
     echo "$variant" >>variants
@@ -233,84 +456,6 @@ add_variant() {
 }
 #+END_SRC
 
-#+BEGIN_SRC sh :tangle ./vvc :comments both
-# spdi_2_vcf() {
-#     spdi=$1
-#     chr_pos=$(echo "$spdi" | cut -d":" -f1,2)
-#     ref_alt=$(echo "$spdi" | cut -d":" -f3,4)
-#     echo "$chr_pos . $ref_alt" | tr ":" " "
-# }
-#+END_SRC
-
-+ Map to other assembly information https://rest.ensembl.org/documentation/info/assembly_map
-#+BEGIN_SRC sh
-curl -s 'https://rest.ensembl.org/map/human/GRCh38/18:36156575..36156575:1/GRCh37?' -H 'Content-type:application/json' | jq ".mappings[].mapped"
-#+END_SRC
-
-+ Get hgvsc information https://rest.ensembl.org/documentation/info/variant_recoder
-#+BEGIN_SRC sh
-# $1="18:36156575:G:A"
-variant_recoder() (
-myPROTOCOL="https"
-myHOST="rest.ensembl.org"
-myPATH="variant_recoder/human"
-myMETHOD="GET"
-myHEADER="Content-type:application/json"
-# myPARAMETERS="?assembly=GCF_000001405.38"
-myDATA="$1"
-myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"/"$myDATA"
-curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER" | jq '.'
-)
-#+END_SRC
-
-+ Get rs id
-#+BEGIN_SRC sh
-# $1="18 36156575 . G A"
-get_rs_id() (
-myPROTOCOL="https"
-myHOST="api.ncbi.nlm.nih.gov"
-myPATH="variation/v0/vcf/file/set_rsids"
-myMETHOD="POST"
-myHEADER="Content-Type: text/plain; charset=utf-8"
-myPARAMETERS="?assembly=GCF_000001405.38"
-myDATA="$1"
-myURL="$myPROTOCOL"://"$myHOST"/"$myPATH""$myPARAMETERS"
-RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER" -d "$myDATA")
-if echo "$RESPONSE" | grep -i "error"; then
-    fancy_message error "An error occured while getting the rs id for the variant $1"
-    fancy_message error "$RESPONSE"
-    fancy_message error "Exiting..."
-    exit 1
-fi
-echo "$RESPONSE" | awk "{print $3}"
-)
-#+END_SRC
-
-+ update variant
-#+BEGIN_SRC sh :tangle ./vvc :comments both
-update_variant() {
-    # log "info" "updating variant $spdi"
-    # vcf=$(spdi_2_vcf $spdi)
-    # log "info" "converted $spdi to $vcf"
-    # host="https://rest.ensembl.org"
-    # path="vep/homo_sapiens/region"
-    # header="Content-type:application/json"
-    # data=$(printf "'%s'" "$(printf '{"variants": ["%s"]}' "$vcf")")
-
-    # cmd="curl '$host/$path/$spdi' -H $header"
-    # # check response is 200
-    # echo "$cmd"
-    # res=$(eval $cmd)
-    # echo "$res"
-    # # You probably need a regex here
-    host=$(echo "$host" | cut -d '/' -f 3)
-    path="annotations/$variant/$host/$path"
-    mkdir -p "$path"
-    echo $res > "$path/data"
-    git add "$path/data"
-    git commit -m "updated $spdi $path"
-}
-#+END_SRC
 
 #+BEGIN_SRC sh :tangle ./vvc :comments both
 check_variant_repository
@@ -361,4 +506,22 @@ case "${ACTION}" in
 esac
 
 cd "$CURRENT_DIR" || exit
+if [ "$LOGLVL" = 0 ]; then set +xv; fi
+#+END_SRC
+
+* Singularity Recipe
+
+#+BEGIN_SRC shell :tangle ./Singularity.recipe
+Bootstrap: docker
+From: ubuntu:rolling
+
+%post
+  apt-get -y update
+  apt-get -y install git jq curl
+
+%files
+  hello.py /
+
+%runscript
+  python /hello.py
 #+END_SRC

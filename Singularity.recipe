@@ -1,0 +1,12 @@
+Bootstrap: docker
+From: ubuntu:rolling
+
+%post
+  apt-get -y update
+  apt-get -y install git jq curl
+
+%files
+  hello.py /
+
+%runscript
+  python /hello.py

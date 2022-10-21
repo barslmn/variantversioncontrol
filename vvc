@@ -16,7 +16,7 @@ if [ -z "$VVC_DIR" ]; then
 fi
 
 if [ -z "$VVC_LOGLVL" ]; then
-    VVC_LOGLVL="DEBUG"
+    VVC_LOGLVL="INFO"
 fi
 
 if [ -z "$VVC_REPOSITORY" ]; then
@@ -127,6 +127,8 @@ get_log_level() {
 }
 
 LOGLVL=$(get_log_level $VVC_LOGLVL)
+if [ "$LOGLVL" = 0 ]; then set -xv; fi
+
 log() {
     level=$1
     message=$2
@@ -181,33 +183,237 @@ check_variant_repository() {
 # [[file:README.org::*Source][Source:6]]
 validate_variant() {
     VARIANT="$1"
-    if [ "$VARIANT" = 3 ]; then
-        fancy_message error "$VARIANT REF MISMATCH"
-        exit 1
+    if echo "$VARIANT" | grep -P '(chr|)([1-9]|1[1-9]|2[0-2]|X|Y):(\d+):(A|T|C|G)+:(A|T|C|G)+' >/dev/null; then
+        fancy_message info "$VARIANT variant passed the regex validation."
+    else
+        fancy_message error "$VARIANT variant needs to be in SPDI format."
     fi
-
-    spdi="$1"
-    host="https://rest.ensembl.org"
-    path="variant_recoder/human"
-    header="Content-type:application/json"
-    cmd="curl $host/$path/$spdi  -H $header"
-    res=$(eval $cmd)
-    echo "$cmd"
 }
 # Source:6 ends here
+
+
+
+# + Get other variant representations https://rest.ensembl.org/documentation/info/variant_recoder
+
+# [[file:README.org::*Source][Source:8]]
+# $1="18:36156575:G:A"
+variant_recoder() (
+    myMETHOD="GET"
+    myHEADER="Content-type:application/json"
+    # myPARAMETERS="?assembly=GCF_000001405.38"
+    myDATA="$1"
+    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"/"$myDATA"
+    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
+    echo "$RESPONSE"
+)
+# Source:8 ends here
+
+
+
+
+# + get VEP annotation
+
+# [[file:README.org::*Source][Source:9]]
+get_vep() (
+    VARIANT="$1"
+    myMETHOD="GET"
+    myHEADER="Content-type:application/json"
+    # myPARAMETERS="?assembly=GCF_000001405.38"
+    myDATA="$1"
+    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"/"$myDATA"
+    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
+    echo "$RESPONSE"
+)
+# Source:9 ends here
+
+
+
+# + Get rs id
+
+# [[file:README.org::*Source][Source:10]]
+# $1="NC_000008.11:19956017:A:G"
+get_rsid() {
+    SPDI="$1"
+    myMETHOD="GET"
+    myHEADER="Content-Type: text/plain; charset=utf-8"
+    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"
+    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
+    export RESPONSE
+    case "$RESPONSE" in
+        *"does not match any RSID"*)
+            fancy_message info "No rs id found for the variant: $SPDI"
+            echo "NOVEL"
+            ;;
+        *"error"*)
+            fancy_message error "An error occured while getting the rs id for the variant $1"
+            fancy_message error "$RESPONSE"
+            fancy_message error "Exiting..."
+            exit 1
+            ;;
+    esac
+    echo "$RESPONSE"
+}
+# Source:10 ends here
+
+# [[file:README.org::*Source][Source:11]]
+# $1=267
+get_alfa() {
+    rsid="$1"
+    myMETHOD="GET"
+    myHEADER="accept: application/json"
+    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"
+    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
+    export RESPONSE
+    case "$RESPONSE" in
+        *"error"*)
+            fancy_message error "An error occured while getting the frequencies for rsid $rsid"
+            fancy_message error "$RESPONSE"
+            ;;
+    esac
+    echo "$RESPONSE"
+}
+# Source:11 ends here
+
+
+
+# + get litvar
+
+# [[file:README.org::*Source][Source:12]]
+# $1=rs267,rs5,rs6
+get_litvar() {
+    rsid="$1"
+    myMETHOD="GET"
+    myHEADER="accept: application/json"
+    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"
+    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
+    export RESPONSE
+    case "$RESPONSE" in
+        *"error"*)
+            fancy_message error "An error occured while getting the frequencies for rsid $rsid"
+            fancy_message error "$RESPONSE"
+            ;;
+    esac
+    echo "$RESPONSE"
+}
+# Source:12 ends here
+
+# [[file:README.org::*Source][Source:13]]
+# $1=hgvsg
+get_clingen() {
+    hgvsg="$1"
+    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"
+    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
+    case "$RESPONSE" in
+        *"error"*)
+            fancy_message error "An error occured while getting ClinGen for $hgvsg"
+            fancy_message error "$RESPONSE"
+            ;;
+    esac
+    echo "$RESPONSE"
+}
+
+# curl the URL return the JSON result
+# Source:13 ends here
+
+
+# + [ ] CIVIC
+# + [ ] Onkokb
+# + [ ] CancerVar
+
+
+# [[file:README.org::*Somatic][Somatic:1]]
+ENSEMBLHOST="ensembl"
+VEPPATH="$ENSEMBLHOST/vep"
+VARRECPATH="$ENSEMBLHOST/variantrecoder"
+NCBIHOST="ncbi"
+ALFAPATH="$NCBIHOST/alfa"
+LITVARPATH="$NCBIHOST/litvar"
+
+CLINGENHOST="clingen"
+CLINGENPATH="$CLINGENHOST/interpretations"
+
+# $1 path
+# $2 data
+write_data() {
+    mkdir -p "annotations/$1"
+    echo "$2" | jq -S '.' >"annotations/$1/data"
+}
+api_call() {
+    URL="$1"
+    METHOD="GET"
+    HEADER="accept: application/json"
+    RESPONSE=$(curl -s -X "$METHOD" "$URL" -H "$HEADER")
+    echo "$RESPONSE"
+}
+
+API_TABLE="
+RECODER_URL https://rest.ensembl.org/variant_recoder/human/$spdi
+VEP_URL     https://rest.ensembl.org/vep/human/hgvs/$hgvsg
+RSID_URL    https://api.ncbi.nlm.nih.gov/variation/v0/spdi/$spdi/rsids
+ALFA_URL    https://api.ncbi.nlm.nih.gov/variation/v0/refsnp/$rsid/frequency
+LITVAR_URL  https://ncbi.nlm.nih.gov/research/bionlp/litvar/api/v1/entity/litvar/rs$rsid%23%23
+CLINGEN_URL https://erepo.genome.network/evrepo/api/interpretations?hgvs=$hgvsg
+"
+
+update_variant() {
+    while IFS= read -r line; do
+        identifiers=""
+        tmp=$(mktemp)
+        path=$(echo $line | awk -F"\t" '{print $1}')
+        url=$(echo $line | awk -F"\t" '{print $2}')
+        handler=$(echo $line | awk -F"\t" '{print $3}')
+        echo "$identifiers\nURL=$url" > $tmp
+        . $tmp
+        response=$(api_call $URL)
+        if [ -z "$handler" ]; then
+            sh $handler $response
+        fi
+        write_data $response $path
+    done < apitable.tsv | sed '/^$/d'
+    git add .
+    git commit -m "updated $variant"
+}
+# update_variant() {
+#     varrec=$(variant_recoder "$variant")
+#     write_data "$variant/$VARRECPATH" "$varrec"
+#     hgvsg=$(echo "$varrec" | jq -r '.[][].hgvsg[] | @text')
+#     refseq_spdi=$(echo "$varrec" | jq -r '.[][].spdi[]')
+#     vep_data=$(get_vep "$hgvsg")
+#     write_data "$variant/$VEPPATH" "$vep_data"
+#     rsid=$(get_rsid "$refseq_spdi" | jq -r ".[].rsids[]")
+#     alfa_data=$(get_alfa "$rsid")
+#     write_data "$variant/$ALFAPATH" "$alfa_data"
+#     litvar_data=$(get_litvar "$rsid")
+#     write_data "$variant/$LITVARPATH" "$litvar_data"
+#     clingen_data=$(get_clingen "$hgvsg")
+#     write_data "$variant/$CLINGENPATH" "$clingen_data"
+#     git add .
+#     git commit -m "updated $variant"
+# }
+# Somatic:1 ends here
+
+# [[file:README.org::*Somatic][Somatic:2]]
+update_annotations() {
+    log "info" "Updating all variants."
+    while IFS= read -r variant; do
+        update_variant "$variant"
+    done <variants
+}
+# Somatic:2 ends here
 
 
 
 # add variant
 
 
-# [[file:README.org::*Source][Source:7]]
+# [[file:README.org::*Somatic][Somatic:3]]
 add_variant() {
     variant="$1"
     if grep "$variant" variants >/dev/null; then
         log "info" "variant already added! Exiting."
         exit
     fi
+    validate_variant "$variant"
 
     log "info" "Adding variant $variant"
     echo "$variant" >>variants
@@ -216,47 +422,9 @@ add_variant() {
     git commit -m "added variant $variant"
     update_variant "$variant"
 }
-# Source:7 ends here
+# Somatic:3 ends here
 
-# [[file:README.org::*Source][Source:8]]
-# spdi_2_vcf() {
-#     spdi=$1
-#     chr_pos=$(echo "$spdi" | cut -d":" -f1,2)
-#     ref_alt=$(echo "$spdi" | cut -d":" -f3,4)
-#     echo "$chr_pos . $ref_alt" | tr ":" " "
-# }
-# Source:8 ends here
-
-
-
-# + update variant
-
-# [[file:README.org::*Source][Source:12]]
-update_variant() {
-    # log "info" "updating variant $spdi"
-    # vcf=$(spdi_2_vcf $spdi)
-    # log "info" "converted $spdi to $vcf"
-    # host="https://rest.ensembl.org"
-    # path="vep/homo_sapiens/region"
-    # header="Content-type:application/json"
-    # data=$(printf "'%s'" "$(printf '{"variants": ["%s"]}' "$vcf")")
-
-    # cmd="curl '$host/$path/$spdi' -H $header"
-    # # check response is 200
-    # echo "$cmd"
-    # res=$(eval $cmd)
-    # echo "$res"
-    # # You probably need a regex here
-    host=$(echo "$host" | cut -d '/' -f 3)
-    path="annotations/$variant/$host/$path"
-    mkdir -p "$path"
-    echo $res > "$path/data"
-    git add "$path/data"
-    git commit -m "updated $spdi $path"
-}
-# Source:12 ends here
-
-# [[file:README.org::*Source][Source:13]]
+# [[file:README.org::*Somatic][Somatic:4]]
 check_variant_repository
 
 if [ -n "${1}" ]; then
@@ -305,4 +473,5 @@ case "${ACTION}" in
 esac
 
 cd "$CURRENT_DIR" || exit
-# Source:13 ends here
+if [ "$LOGLVL" = 0 ]; then set +xv; fi
+# Somatic:4 ends here
