@@ -3,4 +3,6 @@ ENSENBL_VEP	https://rest.ensembl.org/vep/human/hgvs/$hgvsg
 NCBI_RSID	https://api.ncbi.nlm.nih.gov/variation/v0/spdi/$spdi/rsids	rsid_handler
 NCBI_ALFA	https://api.ncbi.nlm.nih.gov/variation/v0/refsnp/$rsid/frequency
 NCBI_LITVAR	https://ncbi.nlm.nih.gov/research/bionlp/litvar/api/v1/entity/litvar/rs$rsid%23%23
-CLINGEN_URL	https://erepo.genome.network/evrepo/api/interpretations?hgvs=$hgvsg
+CLINGEN_ACMG	https://erepo.genome.network/evrepo/api/interpretations?hgvs=$hgvsg
+BROAD_SPLICEAI	https://spliceailookup-api.broadinstitute.org/spliceai/\?hg\=38\&variant\=$broad
+INTERVAR_ACMG	http://wintervar.wglab.org/api_new.php?queryType=position&chr=$chrom&pos=$pos&ref=$ref&alt=$alt&build=hg38		16

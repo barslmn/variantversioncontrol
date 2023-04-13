@@ -1,0 +1,8 @@
+#!/bin/sh
+
+rsid=$(echo "$1" | jq -r ".[].rsids[]")
+identifiers="
+${rsid:+rsid=$rsid}
+$identifiers
+"
+echo "$identifiers" | sed '/^$/d'

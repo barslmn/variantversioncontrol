@@ -2,5 +2,22 @@
 
 hgvsg=$(echo "$1" | jq -r '.[][].hgvsg[] | @text')
 spdi=$(echo "$1" | jq -r '.[][].spdi[]')
-identifiers="hgvsg=$hgvsg spdi=$spdi $identifiers"
-export identifiers
+
+chrom=$(echo "$spdi" | cut -d":" -f1)
+chrom=${chrom%.*}
+chrom=$(echo "${chrom#NC_}" | sed 's/^0\+//')
+pos=$(echo "$spdi" | cut -d":" -f2)
+ref=$(echo "$spdi" | cut -d":" -f3)
+alt=$(echo "$spdi" | cut -d":" -f4)
+
+identifiers="
+${hgvsg:+hgvsg=$hgvsg}
+${spdi:+spdi=$spdi}
+${chrom:+chrom=$chrom}
+${pos:+pos=$pos}
+${ref:+ref=$ref}
+${alt:+alt=$alt}
+${alt:+broad=$chrom-$pos-$ref-$alt}
+$identifiers
+"
+echo "$identifiers" | sed '/^$/d'

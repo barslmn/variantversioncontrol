@@ -6,6 +6,9 @@ VVC helps you to store the variant that you are interested in a git repository.
 Makes it possible to track changes in variant annotation with git commits.
 Informs you of the annotation changes by mail or notification.
 
+TODO: Singularity image
+TODO: Email setup
+
 * Installation
 
 git clone
@@ -20,52 +23,168 @@ https://crontab.guru/#0_9_*_*_3
 
 * API Table
 
-| name | description | source    | url | path | data | parameters |
-|------+-------------+-----------+-----+------+------+------------|
-| VEP  |             | Ensembl   |     |      |      |            |
-|      |             | Mutalyzer |     |      |      |            |
-|      |             | ClinGen   |     |      |      |            |
-|      |             | InterVar  |     |      |      |            |
-|      |             | LitVar    |     |      |      |            |
+** Germline
+| path            | url                                                                                                        | handler         | limit |
+|-----------------+------------------------------------------------------------------------------------------------------------+-----------------+-------|
+| ENSEMBL_RECODER | https://rest.ensembl.org/variant_recoder/human/$spdi                                                       | recoder_handler |       |
+| ENSENBL_VEP     | https://rest.ensembl.org/vep/human/hgvs/$hgvsg                                                             |                 |       |
+| NCBI_RSID       | https://api.ncbi.nlm.nih.gov/variation/v0/spdi/$spdi/rsids                                                 | rsid_handler    |       |
+| NCBI_ALFA       | https://api.ncbi.nlm.nih.gov/variation/v0/refsnp/$rsid/frequency                                           |                 |       |
+| NCBI_LITVAR     | https://ncbi.nlm.nih.gov/research/bionlp/litvar/api/v1/entity/litvar/rs$rsid%23%23                         |                 |       |
+| CLINGEN_ACMG    | https://erepo.genome.network/evrepo/api/interpretations?hgvs=$hgvsg                                        |                 |       |
+| BROAD_SPLICEAI  | https://spliceailookup-api.broadinstitute.org/spliceai/\?hg\=38\&variant\=$broad                           |                 |       |
+| INTERVAR_ACMG   | http://wintervar.wglab.org/api_new.php?queryType=position&chr=$chrom&pos=$pos&ref=$ref&alt=$alt&build=hg38 |                 |    16 |
+| MYVARIANTINFO   | https://myvariant.info/v1/variant/$hgvsg                                                                   |                 |       |
+
+** Somatic
++ CIVIC
++ Onkokb
++ CancerVar
 
 
-| VEP  | Ensembl VEP annotation | ensembl | https://rest.ensembl.org | =/vep/homo_sapiens/region/= | '{"variants":["%VCF"]}' | refseq=1   |
-https://wintervar.wglab.org/url.php
-https://rest.ensembl.org/documentation/info/variant_recoder
+* Source
 
+** Logger script
+This function is copied from the [[https://github.com/wimpysworld/dep-get][dep-get]] project. The function is used to print
+messages to the terminal. The function takes two arguments. The first argument
+is the type of message and the second argument is the message itself.
 
+#+begin_src shell :tangle logger.sh :shebang #!/bin/sh
+fancy_message() (
+    if [ -z "${1}" ] || [ -z "${2}" ]; then
+        return
+    fi
 
-* [ ] Source
+    RED="\e[31m"
+    GREEN="\e[32m"
+    YELLOW="\e[33m"
+    MAGENTA="\e[35m"
+    RESET="\e[0m"
+    MESSAGE_TYPE=""
+    MESSAGE=""
+    MESSAGE_TYPE="${1}"
+    MESSAGE="${2}"
 
-Some variables
+    case ${MESSAGE_TYPE} in
+        info) printf "  [${GREEN}+${RESET}] %s\n" "${MESSAGE}" ;;
+        progress) printf "  [${GREEN}+${RESET}] %s" "${MESSAGE}" ;;
+        recommend) printf "  [${MAGENTA}!${RESET}] %s\n" "${MESSAGE}" ;;
+        warn) printf "  [${YELLOW}*${RESET}] WARNING! %s\n" "${MESSAGE}" ;;
+        error) printf "  [${RED}!${RESET}] ERROR! %s\n" "${MESSAGE}" ;;
+        fatal)
+            printf "  [${RED}!${RESET}] ERROR! %s\n" "${MESSAGE}"
+            exit 1
+            ;;
+        *) printf "  [?] UNKNOWN: %s\n" "${MESSAGE}" ;;
+    esac
+)
+#+END_SRC
 
-+ VVC_DIR
-+ VVC_REPOSITORY
-+ VVC_LOGLVL
-  options are: DEBUG, INFO, WARNING, ERROR
+*** Log function and log level
+This function is used to print messages to the terminal. The function takes two
+arguments. The first argument is the type of message and the second argument is
+the message itself. The log level is set by the environment variable
+~VVC_LOGLVL~. The default log level is ~INFO~.
 
-#+BEGIN_SRC sh :tangle ./vvc :comments both :shebang "#!/bin/sh"
-LC_ALL=C
-if [ -z "$VVC_DIR" ]; then
+#+begin_src shell :tangle logger.sh
+get_log_level() {
+    case "$1" in
+        debug | DEBUG | d | D)
+            lvl=0
+            ;;
+        info | INFO | I | i)
+            lvl=1
+            ;;
+        warning | warn | WARNING | WARN | W | w)
+            lvl=2
+            ;;
+        error | err | ERROR | ERR | E | e)
+            lvl=3
+            ;;
+    esac
+    echo "$lvl"
+}
+
+LOGLVL=$(get_log_level "$VVC_LOGLVL")
+# if [ "$LOGLVL" = 0 ]; then set -xv; fi
+
+log() {
+    level=$1
+    message=$2
+    loglvl=$(get_log_level "$level")
+    if [ "$loglvl" -ge "$LOGLVL" ]; then
+        case $loglvl in
+            0 | debug)
+                fancy_message "info" "$level $message"
+                ;;
+            1 | info)
+                fancy_message "info" "$level $message"
+                ;;
+            2 | warn)
+                fancy_message "warning" "$level $message"
+                ;;
+            3 | err)
+                fancy_message "error" "$level $message"
+                ;;
+        esac
+    fi
+}
+#+END_SRC
+
+** VVC main script
+This section sets up the environment variables. These variables are:
+- VVC_DIR: directory where the variant repository is stored. Example: $HOME/.local/share
+- VVC_REPOSITORY: name of the variant repository. Example: my_variants
+- VVC_LOGLVL: log level of the script options are: DEBUG, INFO, WARNING, ERROR
+
+#+BEGIN_SRC sh :tangle vvc.sh :comments both :shebang "#!/bin/sh"
+set -e
+set -u
+BASEDIR=$(dirname "$0")
+cd "$BASEDIR" || exit
+
+if [ -z "${VVC_DIR-}" ]; then
     VVC_DIR="$HOME/.local/share"
 fi
 
-if [ -z "$VVC_LOGLVL" ]; then
+if [ -z "${VVC_LOGLVL-}" ]; then
     VVC_LOGLVL="INFO"
 fi
-
-if [ -z "$VVC_REPOSITORY" ]; then
+if [ -z "${VVC_REPOSITORY-}" ]; then
     VVC_REPOSITORY="my_variants"
 fi
+
+. ./logger.sh
+TMPDIR=$(mktemp -d VVCp$$.XXXXXX -p /tmp)
+log "debug" "TEMP DIRECTORY set to: $TMPDIR"
+LC_ALL=C
+
 VARIANT_REPOSITORY="$VVC_DIR/$VVC_REPOSITORY"
 CURRENT_DIR="$PWD"
 readonly VERSION="0.0.1"
 #+END_SRC
 
 
-Help function
+*** Help function
+Avaliable commands are:
+- update: update the variant repository.
+  + example usage: vvc update
+- add: add a variant to the repository
+  + example usage: vvc add rs1234
+- remove: remove a variant from the repository
+  + example usage: vvc remove rs1234
+- search: search for a variant in the repository
+  + example usage: vvc search rs1234
+- show: show information about a variant
+  + example usage: vvc show rs1234
+- list: list all variants in the repository
+  + example usage: vvc list
+- tsvlist: list all variants in the repository in tsv format
+  + example usage: vvc tsvlist
+- help: show this help
+- version: show the version of vvc
 
-#+BEGIN_SRC sh :tangle ./vvc :comments both
+#+BEGIN_SRC sh :tangle vvc.sh :comments both
 usage() {
     cat <<HELP
 Usage
@@ -97,103 +216,28 @@ HELP
 }
 #+END_SRC
 
-message formatter
+*** Check variant repository
+This is the first thing that is done when the script is run. The function checks
+if the variant repository exists. If it does not exist, it creates it. If it
+does exist, it changes the current directory to the variant repository.
 
-#+BEGIN_SRC sh :tangle ./vvc :comments both
-fancy_message() (
-    if [ -z "${1}" ] || [ -z "${2}" ]; then
-        return
-    fi
-
-    RED="\e[31m"
-    GREEN="\e[32m"
-    YELLOW="\e[33m"
-    MAGENTA="\e[35m"
-    RESET="\e[0m"
-    MESSAGE_TYPE=""
-    MESSAGE=""
-    MESSAGE_TYPE="${1}"
-    MESSAGE="${2}"
-
-    case ${MESSAGE_TYPE} in
-        info) printf "  [${GREEN}+${RESET}] %s\n" "${MESSAGE}" ;;
-        progress) printf "  [${GREEN}+${RESET}] %s" "${MESSAGE}" ;;
-        recommend) printf "  [${MAGENTA}!${RESET}] %s\n" "${MESSAGE}" ;;
-        warn) printf "  [${YELLOW}*${RESET}] WARNING! %s\n" "${MESSAGE}" ;;
-        error) printf "  [${RED}!${RESET}] ERROR! %s\n" "${MESSAGE}" ;;
-        fatal)
-            printf "  [${RED}!${RESET}] ERROR! %s\n" "${MESSAGE}"
-            exit 1
-            ;;
-        *) printf "  [?] UNKNOWN: %s\n" "${MESSAGE}" ;;
-    esac
-)
-#+END_SRC
-
-log level message
-
-#+BEGIN_SRC sh :tangle ./vvc :comments both
-get_log_level() {
-    lvl="$1"
-    case $lvl in
-        debug | DEBUG | d | D)
-            lvl="0"
-            ;;
-        info | INFO | I | i)
-            lvl="1"
-            ;;
-        warning | warn | WARNING | WARN | W | w)
-            lvl="2"
-            ;;
-        error | err | ERROR | ERR | E | e)
-            lvl="3"
-            ;;
-    esac
-    echo $lvl
-}
-
-LOGLVL=$(get_log_level $VVC_LOGLVL)
-if [ "$LOGLVL" = 0 ]; then set -xv; fi
-
-log() {
-    level=$1
-    message=$2
-    loglvl=$(get_log_level "$level")
-    if [ "$loglvl" -ge "$LOGLVL" ]; then
-        case $loglvl in
-            0 | debug)
-                fancy_message "info" "$level $message"
-                ;;
-            1 | info)
-                fancy_message "info" "$level $message"
-                ;;
-            2 | warn)
-                fancy_message "warning" "$level $message"
-                ;;
-            3 | err)
-                fancy_message "error" "$level $message"
-                ;;
-        esac
-    fi
-}
-#+END_SRC
-
-check variant repository
-
-#+BEGIN_SRC sh :tangle ./vvc :comments both
+#+BEGIN_SRC sh :tangle vvc.sh :comments both
 check_variant_repository() {
     if [ -d "$VARIANT_REPOSITORY" ]; then
         log "debug" "Directory $VARIANT_REPOSITORY exists. Changing directory."
         cd "$VARIANT_REPOSITORY" || exit
         if [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" ]; then
-            log "debug" "Variant Repository at $VARIANT_REPOSITORY exists."
+            log "debug" "Variant repository at $VARIANT_REPOSITORY exists."
             return 0
         else
-            log "info" "Variant Repository at $VARIANT_REPOSITORY does not exist. Creating it for you."
+            log "info" "Variant repository at $VARIANT_REPOSITORY does not exist. Creating it for you."
             git init
             touch "$VARIANT_REPOSITORY/variants"
+            mkdir -p "$VARIANT_REPOSITORY/annotations"
             git add variants annotations/
-            git commit "initial commit"
+            git config --add --local user.name variantversioncontrol
+            git config --add --local user.email variant@version.control
+            git commit -m "Initial commit"
         fi
     else
         log "info" "Directory $VARIANT_REPOSITORY does not exist. Creating it for you."
@@ -203,17 +247,20 @@ check_variant_repository() {
 }
 #+END_SRC
 
-#+BEGIN_SRC sh :tangle ./vvc :comments both
+*** Validate variant
+Currently only SPDI format is supported.
+TODO: add support for rs numbers and hgvs
+
+#+BEGIN_SRC sh :tangle vvc.sh :comments both
 validate_variant() {
     VARIANT="$1"
     if echo "$VARIANT" | grep -P '(chr|)([1-9]|1[1-9]|2[0-2]|X|Y):(\d+):(A|T|C|G)+:(A|T|C|G)+' >/dev/null; then
-        fancy_message info "$VARIANT variant passed the regex validation."
+        log "debug" "$VARIANT variant passed the regex validation."
     else
-        fancy_message error "$VARIANT variant needs to be in SPDI format."
+        log "error" "$VARIANT variant needs to be in SPDI format."
     fi
 }
 #+END_SRC
-
 
 
 + Map to other assembly information https://rest.ensembl.org/documentation/info/assembly_map
@@ -221,118 +268,6 @@ validate_variant() {
 curl -s 'https://rest.ensembl.org/map/human/GRCh38/18:36156575..36156575:1/GRCh37?' -H 'Content-type:application/json' | jq ".mappings[].mapped"
 #+END_SRC
 
-+ Get other variant representations https://rest.ensembl.org/documentation/info/variant_recoder
-#+BEGIN_SRC sh :tangle ./vvc :comments both
-# $1="18:36156575:G:A"
-variant_recoder() (
-    myMETHOD="GET"
-    myHEADER="Content-type:application/json"
-    # myPARAMETERS="?assembly=GCF_000001405.38"
-    myDATA="$1"
-    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"/"$myDATA"
-    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
-    echo "$RESPONSE"
-)
-#+END_SRC
-
-
-+ get VEP annotation
-#+BEGIN_SRC sh :tangle ./vvc :comments both
-get_vep() (
-    VARIANT="$1"
-    myMETHOD="GET"
-    myHEADER="Content-type:application/json"
-    # myPARAMETERS="?assembly=GCF_000001405.38"
-    myDATA="$1"
-    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"/"$myDATA"
-    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
-    echo "$RESPONSE"
-)
-#+END_SRC
-
-+ Get rs id
-#+BEGIN_SRC sh :tangle ./vvc :comments both
-# $1="NC_000008.11:19956017:A:G"
-get_rsid() {
-    SPDI="$1"
-    myMETHOD="GET"
-    myHEADER="Content-Type: text/plain; charset=utf-8"
-    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"
-    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
-    export RESPONSE
-    case "$RESPONSE" in
-        *"does not match any RSID"*)
-            fancy_message info "No rs id found for the variant: $SPDI"
-            echo "NOVEL"
-            ;;
-        *"error"*)
-            fancy_message error "An error occured while getting the rs id for the variant $1"
-            fancy_message error "$RESPONSE"
-            fancy_message error "Exiting..."
-            exit 1
-            ;;
-    esac
-    echo "$RESPONSE"
-}
-#+END_SRC
-
-
-#+BEGIN_SRC sh :tangle ./vvc :comments both
-# $1=267
-get_alfa() {
-    rsid="$1"
-    myMETHOD="GET"
-    myHEADER="accept: application/json"
-    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"
-    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
-    export RESPONSE
-    case "$RESPONSE" in
-        *"error"*)
-            fancy_message error "An error occured while getting the frequencies for rsid $rsid"
-            fancy_message error "$RESPONSE"
-            ;;
-    esac
-    echo "$RESPONSE"
-}
-#+END_SRC
-
-+ get litvar
-#+BEGIN_SRC sh :tangle ./vvc :comments both
-# $1=rs267,rs5,rs6
-get_litvar() {
-    rsid="$1"
-    myMETHOD="GET"
-    myHEADER="accept: application/json"
-    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"
-    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
-    export RESPONSE
-    case "$RESPONSE" in
-        ,*"error"*)
-            fancy_message error "An error occured while getting the frequencies for rsid $rsid"
-            fancy_message error "$RESPONSE"
-            ;;
-    esac
-    echo "$RESPONSE"
-}
-#+END_SRC
-
-#+BEGIN_SRC sh :tangle ./vvc :comments both
-# $1=hgvsg
-get_clingen() {
-    hgvsg="$1"
-    myURL="$myPROTOCOL"://"$myHOST"/"$myPATH"
-    RESPONSE=$(curl -s -X "$myMETHOD" "$myURL" -H "$myHEADER")
-    case "$RESPONSE" in
-        ,*"error"*)
-            fancy_message error "An error occured while getting ClinGen for $hgvsg"
-            fancy_message error "$RESPONSE"
-            ;;
-    esac
-    echo "$RESPONSE"
-}
-
-# curl the URL return the JSON result
-#+END_SRC
 
 + update variant
 
@@ -346,104 +281,105 @@ get_clingen() {
 |    6 | NCBI    | Get pmids from litvar using rsid.               |
 
 
-
-+ [ ] spliceai
- curl -k https://spliceailookup-api.broadinstitute.org/spliceai/\?hg\=38\&variant\=chr8-140300616-T-G | jq "."
-
-** Somatic
-+ [ ] CIVIC
-+ [ ] Onkokb
-+ [ ] CancerVar
-
-#+BEGIN_SRC sh :tangle ./vvc :comments both
-ENSEMBLHOST="ensembl"
-VEPPATH="$ENSEMBLHOST/vep"
-VARRECPATH="$ENSEMBLHOST/variantrecoder"
-NCBIHOST="ncbi"
-ALFAPATH="$NCBIHOST/alfa"
-LITVARPATH="$NCBIHOST/litvar"
-
-CLINGENHOST="clingen"
-CLINGENPATH="$CLINGENHOST/interpretations"
-
+#+BEGIN_SRC sh :tangle vvc.sh :comments both
 # $1 path
 # $2 data
 write_data() {
     mkdir -p "annotations/$1"
     echo "$2" | jq -S '.' >"annotations/$1/data"
 }
-api_call() {
-    URL="$1"
-    METHOD="GET"
-    HEADER="accept: application/json"
-    RESPONSE=$(curl -s -X "$METHOD" "$URL" -H "$HEADER")
-    echo "$RESPONSE"
-}
 
-API_TABLE="
-RECODER_URL https://rest.ensembl.org/variant_recoder/human/$spdi
-VEP_URL     https://rest.ensembl.org/vep/human/hgvs/$hgvsg
-RSID_URL    https://api.ncbi.nlm.nih.gov/variation/v0/spdi/$spdi/rsids
-ALFA_URL    https://api.ncbi.nlm.nih.gov/variation/v0/refsnp/$rsid/frequency
-LITVAR_URL  https://ncbi.nlm.nih.gov/research/bionlp/litvar/api/v1/entity/litvar/rs$rsid%23%23
-CLINGEN_URL https://erepo.genome.network/evrepo/api/interpretations?hgvs=$hgvsg
-"
+api_call() {
+    url="$1"
+    response_content="$2"
+    method="GET"
+    header="accept: application/json"
+    log "debug" "function: api_call0 starting with url: $url and response_content: $response_content"
+    response_code=$(curl --fail --silent --write-out "%{http_code}\n" --output "$response_content" --request "$method" --header "$header" "$url")
+    log "debug" "function: api_call1 url: $url response_code: ${response_code-}"
+    echo "$response_code"
+}
 
 update_variant() {
-    while IFS= read -r line; do
-        identifiers=""
-        tmp=$(mktemp)
-        path=$(echo $line | awk -F"\t" '{print $1}')
-        url=$(echo $line | awk -F"\t" '{print $2}')
-        handler=$(echo $line | awk -F"\t" '{print $3}')
-        echo "$identifiers\nURL=$url" > $tmp
-        . $tmp
-        response=$(api_call $URL)
-        if [ -z "$handler" ]; then
-            sh $handler $response
+    identifiers="spdi=$1"
+    sed '/^$/d;/^#/d;' "$CURRENT_DIR"/apitable.tsv | while IFS= read -r line; do
+        url_tmp=$(mktemp -p "$TMPDIR")
+        unset api
+        unset url
+        unset handler
+        unset rate_limit
+        log "debug" "Identifiers are: $(echo "$identifiers" | tr '\n' ' ')"
+        log "debug" "url_tmp is: $url_tmp"
+        api=$(echo "$line" | awk -F"\t" '{print $1}')
+        url=$(echo "$line" | awk -F"\t" '{print $2}')
+        handler=$(echo "$line" | awk -F"\t" '{print $3}')
+        rate_limit=$(echo "$line" | awk -F"\t" '{print $4}')
+        response_content=$(mktemp -p "$TMPDIR")
+        printf '%s\nurl="%s"' "$identifiers" "$url" >"$url_tmp"
+
+        # first check if the required identifiers are set
+        if (. "$url_tmp" 2>/dev/null); then
+            . "$url_tmp";
+        else
+            log "info" "Required identifiers were not set. Skipping $api.";
+            continue;
         fi
-        write_data $response $path
-    done < apitable.tsv | sed '/^$/d'
+
+        log "debug" "Calling $url"
+        if [ -n "$rate_limit" ]; then
+            log "debug" "Waiting for $rate_limit seconds before calling $url"
+            sleep "$rate_limit"
+        fi
+        # log "debug" "function: update_variant0 api: $api url: $url handler: $handler rate_limit: $rate_limit response_content: $response_content"
+        # response_code=$(api_call "$url" "$response_content")
+        method="GET"
+        header="accept: application/json"
+        log "debug" "api_call starting with url: $url and response_content: $response_content"
+        # TODO: insecure is required for spliceai.
+        response_code=$(curl --insecure --silent --write-out "%{http_code}\n" --output "$response_content" --request "$method" --header "$header" "$url")
+        log "debug" "api_call ended for $api response_code: ${response_code-}"
+
+        log "debug" "function: update_variant1 response_code: $response_code"
+
+        if [ "${response_code-}" -eq 200 ]; then
+            response_content=$(cat "$response_content")
+            if [ -n "$handler" ]; then
+                log "debug" "running handler: $handler"
+                identifiers=$(sh "$CURRENT_DIR/$handler" "$response_content" | sed -e 's/=\([^"][^ ]*\)/="\1"/g')
+                export identifiers
+            fi
+            write_data "$1/$api" "$response_content"
+        else
+            log "info" "Call to $api returned $response_code not updating this file."
+        fi
+    done
+    log "debug" "committing changes"
     git add .
-    git commit -m "updated $variant"
+    # pipe to true to avoid failing if there are no changes.
+    git commit -m "updated $variant" || true
 }
-# update_variant() {
-#     varrec=$(variant_recoder "$variant")
-#     write_data "$variant/$VARRECPATH" "$varrec"
-#     hgvsg=$(echo "$varrec" | jq -r '.[][].hgvsg[] | @text')
-#     refseq_spdi=$(echo "$varrec" | jq -r '.[][].spdi[]')
-#     vep_data=$(get_vep "$hgvsg")
-#     write_data "$variant/$VEPPATH" "$vep_data"
-#     rsid=$(get_rsid "$refseq_spdi" | jq -r ".[].rsids[]")
-#     alfa_data=$(get_alfa "$rsid")
-#     write_data "$variant/$ALFAPATH" "$alfa_data"
-#     litvar_data=$(get_litvar "$rsid")
-#     write_data "$variant/$LITVARPATH" "$litvar_data"
-#     clingen_data=$(get_clingen "$hgvsg")
-#     write_data "$variant/$CLINGENPATH" "$clingen_data"
-#     git add .
-#     git commit -m "updated $variant"
-# }
 #+END_SRC
 
 
-#+BEGIN_SRC sh :tangle ./vvc :comments both
+#+BEGIN_SRC sh :tangle vvc.sh :comments both
 update_annotations() {
     log "info" "Updating all variants."
-    while IFS= read -r variant; do
+    sed '/^$/d;/^#/d;' variants | while IFS= read -r variant; do
+        log "info" "Updating variant $variant"
         update_variant "$variant"
-    done <variants
+        log "info" "Finished updating variant $variant"
+    done
 }
 #+END_SRC
 
 add variant
 
-#+BEGIN_SRC sh :tangle ./vvc :comments both
+#+BEGIN_SRC sh :tangle vvc.sh :comments both
 add_variant() {
     variant="$1"
     if grep "$variant" variants >/dev/null; then
-        log "info" "variant already added! Exiting."
-        exit
+        log "info" "variant $variant already added! Skipping."
+        return 0
     fi
     validate_variant "$variant"
 
@@ -456,57 +392,105 @@ add_variant() {
 }
 #+END_SRC
 
+*** Main section
 
-#+BEGIN_SRC sh :tangle ./vvc :comments both
-check_variant_repository
+#+BEGIN_SRC sh :tangle vvc.sh :comments both
+main() {
+    check_variant_repository
+    before_hash=$(git rev-parse --short HEAD)
 
-if [ -n "${1}" ]; then
-    ACTION="$1"
-    shift
-else
-    fancy_message error "You must specify an action."
-    # usage
-    exit 1
-fi
+    if [ -n "${1}" ]; then
+        ACTION="$1"
+        shift
+    else
+        log "error" "You must specify an action."
+        # usage
+        exit 1
+    fi
 
-case ${ACTION} in
-    add | remove | show)
-        if [ -z "${1}" ]; then
-            fancy_message error "You must specify a variant:\n"
+    case ${ACTION} in
+        add | remove | show)
+            if [ -z "${1}" ]; then
+                log "error" "You must specify a variant:\n"
+                list_variants
+                exit 1
+            fi
+            ;;
+    esac
+
+    case "${ACTION}" in
+        show) ;;
+        add)
+            for variant in "$@"; do
+                add_variant "$variant"
+            done
+            ;;
+        list)
             list_variants
-            exit 1
-        fi
-        ;;
-esac
+            ;;
+        tsv_list | tsvlist | tsv)
+            tsvlist_variants
+            ;;
+        remove) ;;
 
-case "${ACTION}" in
-    show) ;;
-    add)
-        for variant in "$@"; do
-            add_variant "$variant"
-        done
-        ;;
-    list)
-        list_variants
-        ;;
-    tsv_list | tsvlist | tsv)
-        tsvlist_variants
-        ;;
-    remove) ;;
+        search)
+            list_variants | grep "${1}"
+            ;;
+        update)
+            update_annotations
+            ;;
+        version) echo "${VERSION}" ;;
+        help) usage ;;
+        ,*) log "fatal" "Unknown action supplied: ${ACTION}" ;;
+    esac
 
-    search)
-        list_variants | grep "${1}"
-        ;;
-    update)
-        update_annotations
-        ;;
-    version) echo "${VERSION}" ;;
-    help) usage ;;
-    *) fancy_message fatal "Unknown action supplied: ${ACTION}" ;;
-esac
+    # TODO: maybe do the updates async?
+    # while ps $! >/dev/null; do
+    #     sleep 5
+    #     log "info" "Processing..."
+    # done
 
-cd "$CURRENT_DIR" || exit
-if [ "$LOGLVL" = 0 ]; then set +xv; fi
+    after_hash=$(git rev-parse --short HEAD)
+
+    if [ "$before_hash" != "$after_hash" ]; then
+        log "info" "Changes were made."
+        git diff --stat "$before_hash" "$after_hash"
+    fi
+
+    cd "$CURRENT_DIR" || exit
+    # if [ "$LOGLVL" = 0 ]; then set +xv; fi
+    if [ "$LOGLVL" -ge 1 ]; then rm -rf "$TMPDIR"; fi
+}
+
+main "$@"
+#+END_SRC
+
+#+BEGIN_SRC sh :tangle test.sh :shebang #!/bin/sh :comments both
+#!/usr/bin/env sh
+set -e
+set -u
+echo "info" "test.sh started"
+export VVC_REPOSITORY="test-repository"
+
+BASEDIR=$(dirname "$0")
+cd "$BASEDIR" || exit
+
+# test adding variants
+TEST_VARIANTS="18:36156575:G:A 18:36156575:G:T 18:36156575:G:C 18:36156575:G:AT 18:36156575:G:AC chr12:48968150:T:C chr12:48968150:T:G chr16:3254555:C:T chr16:3254555:C:G"
+echo "info" "test.sh adding variants"
+./vvc.sh add $TEST_VARIANTS
+# for variant in $TEST_VARIANTS; do
+#     ./vvc.sh add "$variant"
+# done
+
+# test updating variants
+echo "info" "test.sh updating variants"
+./vvc.sh update
+
+# test listing variants
+echo "info" "test.sh listing variants"
+./vvc.sh list
+
 #+END_SRC
 
 * Singularity Recipe
